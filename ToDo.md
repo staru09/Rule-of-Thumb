@@ -1,621 +1,307 @@
-# ruleofthumb — ToDo
+# ruleofthumb: ToDo (plain-language version)
 
-Planned improvements to the pip-installable `ruleofthumb` package, ordered
-into execution tiers: quick wins first, then foundational API work that later
-features build on, then new functionality.
+The list of planned work for the `ruleofthumb` pip package
+(repo `https://github.com/KaiRawal/Rule-of-Thumb`, PyPI `ruleofthumb-rot`,
+docs `https://ruleofthumb.readthedocs.io/`), sorted by priority.
 
-Standalone home: this package now lives at
-`https://github.com/KaiRawal/Rule-of-Thumb` (PyPI `ruleofthumb`, docs at
-`https://ruleofthumb.readthedocs.io/`), ported from the research
-monorepo's `pip-package` branch. Terse `(source: legacy ...)` pointers below
-are provenance notes only; the legacy code did not move with the package.
+## How to read this file
 
-## API / correctness
+- **P0** = do first, **P1** = next, **P2** = later, **P3** = maybe, low priority.
+- **Item numbers never change.** Gaps in the numbering are finished or removed items.
+- **Research** items are investigations or experiments. They may not end in code.
+- Each item says **what** it is, **why** it matters, **when it counts as done**, and its **status**.
 
-22. **Committed-weights robustness program for the test suite (P0).** Long SGD
-    fits in underdetermined regimes land in different minima per BLAS
-    kernel, so no live-fit absolute floor is portable across hosts (seen:
-    pets heatmap corr `0.36–0.52` vs `1.0`, text native accuracy `0.65`
-    vs `1.0`, digits top-2 `0.80` vs `0.92`). Direction (decided): the
-    testing pyramid splits by *what is asserted*, not by tier. Unit tests
-    that assert on the *outputs* of a pre-fit RoT (explanations, plots,
-    persistence round-trips, mechanism recovery) load raw `.pt` state
-    dicts as mock fitted models and assert tight margins; integration
-    tests keep fitting live end-to-end with honest loose floors plus
-    structural checks, hardened by bigger-N artifacts and proxy-ensemble
-    floor setting (see below). Converted unit sets (`tests/fixtures/`,
-    minted by `tests/mint_unit_weights.py`, loaded via
-    `tests/_mock_weights.py`): plot rendering (tabular binary +
-    multiclass), persistence round-trips (tabular/text/image, fit
-    incidental), calibrated mechanism recovery (binary + multiclass),
-    faithfulness probes (deletion/pointing/noise), nonlinear ring
-    separation (linear + rbf + hinge). Must stay live everywhere:
-    seed-reproducibility, tune search, native-ingestion fits, comparative
-    fits (including the linear-vs-rbf integration pair). Raw `.pt`, never
-    `.rotx` (version-stamp coupling; `.rotx` stays covered by the
-    round-trip tests). Dataset builders are single-sourced in the loader
-    so mint fits and test inputs cannot drift. Integration hardening, in
-    order: (1) determinism (`torch.use_deterministic_algorithms` where
-    ops allow, batch-order pinning, residual-BLAS note in
-    `development.md`); (2) bigger-N artifacts (digits tabular 500→1797,
-    COMPAS 800→2000, reviews 31→~60 hand-written, image digits 500→1000+;
-    breast-cancer/wine are full-size already); (3) proxy-ensemble floor
-    setting (seeds × threads × device, floors at ensemble minimum minus
-    margin, recorded in `TEST_SUITE.md`). Regen discipline in
-    `development.md`, `TEST_SUITE.md` updates. Done when CI is green with
-    tight unit margins on mocks and measured ensemble-backed floors on
-    live integration fits.
+## Words used below
 
-23. **RoT stability across hardware (research, P2).** The suite has proven the
-    method property behind item 22: long fits in underdetermined regimes
-    (N=31/E=768 text, 20-sample/576-ch pets) reach different minima per
-    kernel, so explanations and fidelity can wobble across machines.
-    Characterize cross-kernel variance, evaluate mitigations (early
-    stopping, stronger regularization, weight averaging, ensembles),
-    cross-referencing item 16's capacity ceilings. Success is
-    explanations/fidelity invariant across kernels; any API change needs
-    a migration note.
-
-24. **Explanation quality beyond fidelity (research, P1).**
-    Fidelity-to-black-box and plausibility-to-human-rationales are
-    separate metrics and must be measured separately: deletion/insertion
-    curves always against random baselines, rank-agreement metrics, and
-    mandatory trivial controls (position/center priors, which beat
-    learned maps on human-agreement scores). Short or noisy inputs defeat
-    pooled representations for rare lexical signals (further evidence
-    for item 16); near-single-class black boxes need explicit handling
-    before any explanation is attempted. No implementation commitment.
-25. **Center-prior comparison for image agreement (research, P2).**
-    Human-agreement scores for saliency are dominated by position priors
-    (a static center control beats learned maps). The fidelity gate and
-    any saliency-as-detector guidance should require beating a center
-    control by margin, or the docs must state plainly that saliency is
-    not gaze prediction. No implementation commitment.
-28. **Allow non-0.5 dropout rates (done: 8a9b902).** Dropout is currently a fixed method
-    constant (0.5): the constructors, factories and `autotune` search
-    space accept no `dropout_rate`, since only 0.5 keeps every partial
-    observation equally likely (uniform over reveal subsets). If the
-    method is ever generalised to biased reveal distributions, re-open
-    the parameter behind a flag and reintroduce the search dimension —
-    with reveal-curve scoring reweighted to match the sampling
-    distribution. Until then the `test_dropout_rate_is_not_tunable`
-    pin stays (pinned at `tests/test_tune.py:186`).
-
-## New functionality
-
-16. **Optional per-location importance weights (deferred, P3: rich backbones cover
-    real use).** Definitions: `K` is the number of classes (2 for cat-vs-dog,
-    10 for digits); `E` is the embedding length per token; `C` is the channel
-    count per pixel; `T`/`H`/`W` are tokens/height/width. The text and image
-    variants share their `a` / `b` parameters across all positions — shape
-    `(K, E)` for text, `(K, C)` for images (`2·K·C` parameters, independent of
-    spatial size) — making each surrogate a linear model on a pooled
-    representation: the token-mean embedding for text, per-channel spatial
-    sums for images. This is faithful to the legacy design and yields
-    position-invariant saliency, but caps fidelity at the separability of the
-    pooled vector: raw single-channel images pool to total ink mass alone, so
-    multiclass fidelity floors out near the majority baseline (always guessing
-    the commonest class) no matter how long the fit runs (measured on digits;
-    see `tests/integration/test_image_integration.py`, which pins the raw
-    failure, the coordinate-channel partial recovery to ~0.35, the TinyCNN
-    trunk at only ~0.49, and the strong MobileNetV3-Small recovery to ~0.99
-    with 500 images exceeding 49 spatial positions). The same applies to
-    text: pooling to the token-mean makes word order invisible, so tasks
-    driven by syntax, negation scope or token counts — rather than which words
-    appear — hit an analogous ceiling even with high-dimensional embeddings,
-    while lexical tasks and rich pretrained embeddings stay strong. Real-life
-    users should use rich backbones (transformer embeddings, MobileNet
-    feature maps) and check surrogate predicted-class accuracy; only if
-    raw-input multiclass is required, consider an opt-in unshared mode —
-    image weights `(K, C, H, W)` / text weights `(K, T, E)` or per-position
-    biases — turning the surrogate into a full linear multiclass model over
-    raw inputs (`2·K·H·W` parameters), behind a constructor flag so the
-    legacy behaviour stays the default.
-
-20. **Documentation content and presentation pass (P1).** The reference docs are
-    complete but the site undersells the package: no conceptual overviews
-    (when RoT fits, how it differs from sensitivity-based explainers, how
-    to judge trust), examples are hello-worlds on dummy data only, plots
-    have no visual gallery, and the test-suite report isn't framed for
-    comparison. Content work, in order: (a) overview essays; (b) real-task
-    example gallery per modality built from the integration artifacts;
-    (c) per-plot-type visual gallery; (d) benchmarks framing; (e)
-    release-notes and contributing pages surfaced from the existing
-    runbooks. Presentation work within the current theme: logo/favicon,
-    landing hero image, announcement banner for the pre-alpha caveat,
-    gallery thumbnails, tighter nav grouping, small custom CSS. Non-goal:
-    no theme switch.
-
-21. **Publication-ready plots via `shap-editorial` (P1).** `shap-editorial`
-    (MIT, v0.1.x alpha, single maintainer — exact pin, treat as
-    replaceable) renders beeswarm/waterfall/bar/scatter from duck-typed
-    `shap.Explanation` objects, returning `(fig, ax)`; it is now a base
-    dependency so it can be imported anywhere in the package. Our tabular
-    path already packs RoT values into `shap.Explanation`, so spike
-    compatibility first: if the objects are accepted as-is, expose
-    editorial variants (`plot.editorial_*` or a `style=` flag) starting
-    with tabular waterfall/bar/beeswarm. Explicit decisions required:
-    palette (editorial grey→red clashes with our binding red=toward /
-    blue=against — override to RoT convention or adopt editorial
-    deliberately, recorded in the changelog); multiclass (rejected
-    upstream — slice a class first, matching our per-class outputs). Ship
-    with tests, a gallery demo under item 20(c), and README/docs updates.
-
-27. **Full-dataset and large-scale validation (research, P3).** The
-    integration tier validates on slices (3000-post text slice,
-    150-subset images) because the dev machine cannot stage dense
-    full-train embeddings (~4.5 GB float32 for 15k×96×768) or finish
-    long fits quickly. Two tracks to close the gap: (1) verify the
-    human-annotation benchmarks on a large machine, using GPU/MPS and
-    threading speedups, and record the slice-vs-full deltas; (2)
-    implement out-of-core RoT training — stream batches from disk
-    (memmap chunks) through `training_loop` so fits run when the data
-    does not fit in memory at once. No implementation commitment.
-29. **Keras-style fit-to-convergence training (P1; tracked under 37).** Searching a fixed
-    `epochs` grid is a stand-in, not a stopping rule: train until the
-    surrogate is determined to be fit — stop when surrogate-vs-blackbox
-    agreement (or validation reveal fidelity) plateaus, with a max-epoch
-    cap — and let `autotune` give up on hopeless hyperparameter
-    combinations early (successive-halving style: abandon candidates
-    whose early fidelity trails the pack instead of running every
-    candidate to completion). Cross-refs item 16 (capacity ceilings bound
-    what "fit" can mean) and item 23 (stability across minima).
-
-30. **Opt-in explanation evaluation (agreement, reveal gap, human-data
-    comparison) (P1; tracked under 37).** An explicit `Explainer.evaluate(...)` reporting only
-    realised, research-backed measures: (a) **fit agreement** —
-    in-sample plus a seeded held-out split, warning below 0.75
-    (extends the existing `train_agreement_` tripwire rather than
-    replacing it); (b) **reveal gap** — reveal-curve AUC minus a seeded
-    random-order AUC via the existing `score_ordering`, computed only
-    on explicit request and off by default; (c) **human-data comparison
-    iff supplied** — length-weighted AUROC of importances against
-    user-provided rationale masks with a random-importance baseline
-    alongside (movie-review/judicial practice: per-span scores,
-    sign-flipped toward the predicted class), text-first and
-    mask-aware. Shipped defaults this item records: `autotune` scores
-    by plain held-out agreement unless `scoring="reveal"` is named,
-    and fits never run reveal machinery (only `predict` for the
-    agreement tripwire). Explicitly out of scope: seed-stability
-    refits, slice breakdowns, center priors, new dependencies, and
-     black-box insertion scoring — the package never holds the model,
-     only its labels, so interventions stay an opt-in accuracy-testing
-     path, never a default.
-
-31. **Per-datapoint misprediction warning (pending, P1).** When a user
-    explains rows whose model predictions are known, rows the
-    stand-in itself gets wrong deserve a warning: their explanations
-    are absurd and meaningless, and the user should be told so —
-    without any error or blocking path. Design: an optional
-    `y_outputs=` kwarg on `Explainer.get_explanation` (the method
-    otherwise never sees black-box answers, so nothing changes unless
-    the kwarg is passed); on mismatch, a single `UserWarning` per
-    call naming the count and row indices (capped list). Plot helpers
-    call `get_explanation` internally without labels and stay silent;
-    `get_order` never computes explanations and is out of scope.
-    Length mismatches fail fast with `ValueError`, matching the
-    file's existing style. Tests: mismatched rows warn with correct
-    indices, matching rows stay quiet, plus multiclass and masked-text
-    cases. Not started.
-
-32. **Brand/graphics refresh (static assets only, P2).** Distinct from
-    improving the `plot.*` visualisations themselves and from item
-    20's in-theme presentation work: redraw the repo/docs identity
-    set — mark (`logo.svg` / `logo-dark.svg`), favicon set, README
-    header banner, and hero/card figures regenerated through
-    `docs-src/_figures/generate_figures.py` (the dummy-data-only rule
-    stays; light/dark pairs stay). Scope is `_static/` plus the
-    `README.md` header and the `index.md` hero/cards only: no
-    `plot.py` API change, no theme switch (item 20's non-goal
-    stands), and the palette keeps the binding red=toward /
-    blue=against convention. Done when the assets land in pairs and
-    every referencing page (`index`, `plots`, `README`) renders in
-    both themes with a green RTD build. Not started.
-
-35. **Interactive explanation explorers (spike, tech open, P2).** No
-    interactive visualisation exists today (repo-wide grep: no
-    `ipywidgets` / `anywidget` / `plotly` / `bokeh`; `plot.text_html`
-    is static HTML, everything else returns a static matplotlib
-    `Figure`). Goal only, stack to be decided by spike: prototype
-    `anywidget` custom views *and* `ipywidgets`-driven matplotlib
-    controls against the same computed `imp` / `order` (reveal-step
-    slider, saliency `power` / `trim` sliders, token hover), then
-    pick per effort, fidelity and RTD-embeddability. Hard
-    constraints: a new optional extra only, the `plot.*`
-    Figure-returning contract unchanged (widgets wrap, never
-    replace), a static fallback always one call away, and no new
-    required dependencies. Ship the decision plus one pilot widget
-    with tests, a gallery demo under item 20(c), and README/docs
-    updates. Done when the pilot renders in JupyterLab and VSCode
-    (plus Colab/RTD if the chosen stack allows). Not started.
-
-36. **Monorepo replication program (research, P0).** The research
-    monorepo (parent checkout; this package is its subdirectory) holds
-    nine hand-tuned RoT experiments driven by `run_all_experiments.sh`
-    — adversarial, scientific, ai_auditing, explanation_example
-    (local + remote), openxai, resume, movie, judicial, runtimes —
-    each with headline numbers the out-of-the-box package install
-    must eventually reproduce. Out-of-the-box means `fit()` *and*
-    `autotune` (autotune is shipped, not a deviation). Protocol per
-    experiment, cheap first (Local → Scientific → OpenXAI →
-    Adversarial → Auditing → Resume → Movie → Judicial → Pets-5000):
-    (1) `fit()` defaults, record the gap; (2) `autotune`, record the
-    gap; (3) hand-set hyperparams beyond autotune's space count as
-    deviations, and each one is an autotune-space improvement ticket;
-    (4) translate legacy idioms (`-1` sentinel → explicit `mask=`,
-    unit vs element granularity, `classes=2` → real K); (5) every API
-    gap or bug found becomes package work, implemented until the
-    replication passes. Pass = headline fidelity/wAUROC within
-    ±0.02 or the paper's own error bars, whichever wider. Hard rules:
-    never re-call paid APIs (reuse committed GPT CSVs), never rerun
-    SHAP/LIME baselines (compare against committed monorepo outputs),
-    heavy legs last — and never modify the monorepo: read its DATA
-    and committed outputs only. The working log is temporary and
-    stays out of version control (`scratch/replication/`, gitignored;
-    per-experiment notes plus the status table). HX/SALICON are out
-    of scope (package-only, reverse direction, already done). Known
-    gap inventory seeding the log: bespoke hyperparams everywhere,
-    sentinel-vs-mask, `RoT_additive`/RBF only in the OpenXAI patch,
-    saliency power/trim viz missing, non-input features need manual
-    augmentation. Done when the scratch log shows all nine passing
-    with zero open gaps and every resulting package improvement is
-    shipped. Not started.
-
-37. **Tuning as the default path (P0).** Every `fit()` searches:
-    `fit`, `fit_tabular`, `fit_text`, `fit_image` gain `tune=True`
-    (`True` → delegate to `autotune()` with defaults; a dict →
-    `space` / `n_candidates` / `scoring` overrides; `None` / `False`
-    → today's fixed fit, kept as the escape hatch for tests and
-    cost-sensitive callers). Recursion guard (autotune calls
-    factories with tuning off); still returns `Explainer` with
-    `best_params_` / `best_score_` attached (`train_agreement_`
-    convention); `autotune()` keeps returning `AutotuneResult`. This
-    item absorbs the two pending tuning tracks rather than stacking a
-    third: (a) item 29's fit-to-convergence (plateau stopping with
-    max-epoch cap) and early abandonment of hopeless candidates
-    become the cost control that makes always-tuning affordable;
-    (b) item 30's `Explainer.evaluate(...)` (held-out agreement +
-    warning, opt-in reveal gap, human-data comparison) becomes the
-    scoring/verification side. Fallout handled here, not elsewhere:
-    the test suite gets explicit `tune=None` at all fixed-behavior
-    call sites (else ~8× suite cost) plus new flag/guard/attribute
-    tests; examples/docs re-executed (slower builds, changed
-    outputs); version bump + changelog + README migration note
-    (`tune=None` restores old behavior). Item 36's protocol collapses
-    to one tuned level. Done when the suite is green at the new
-    default with reported timing, docs promote `tune=True` as the
-    normal path, and 29/30's remaining scope is either shipped inside
-    this item or explicitly re-scoped. Not started.
-
-38. **Dropout-granularity divergence audit (P0).** The package drops
-    whole reveal units per draw while the research monorepo mostly
-    drops individual elements — but the picture differs per modality
-    and must be recorded, not "fixed" blindly. Tabular: no
-    divergence (legacy base `AdversarialAttack/rot_class.py:36` and
-    the OpenXAI patch draw per-feature `(N, d)`; package `core.py`
-    draws `(N,) + imp.shape[2:]` — identical). Text: legacy
-    disagreed with itself — Judicial `RoT_text` draws per-token
-    `(N, T)`, MovieReview shipped per-(token, element) `(N, T, E)`
-    with the per-token version left in as a comment; package
-    (`text.py`) draws per-token `(N, T)` with padding-mask
-    intersection, i.e. the Judicial variant. Image: genuine
-    divergence — legacy draws per-(channel, pixel) `(N, C, H, W)`,
-    package (`image.py`) draws per-pixel `(N, H, W)` with channels
-    shared. Case for whole-unit (keep): reveal units are hidden
-    wholesale at scoring time (decision: unit granularity), so
-    training must sample the same intervention distribution; only
-    whole-unit drops at 0.5 are uniform over reveal subsets (item
-    28); padding interplay is clean; 576× fewer RNG draws on images.
-    Case for per-element (legacy): exact fidelity to two shipped
-    behaviors (pets-5000, MovieReview), finer per-step noise. The
-    sandbox settled it empirically: a granularity shim measured
-    +0.002 (noise), so reversing package behavior would break every
-    committed weight and floor for zero gain — decision: keep, and
-    write the rationale down (code comments + capacity docs) where
-    it currently exists nowhere. Follow-up characterization (no
-    behavior change): dropout *presence* is load-bearing (dropout0
-    heals the image distribution gap; zeroed-b craters fidelity) —
-    record what it does to the solution. Not started.
-
-39. **Sandbox replication feedback batch (P1).** Findings from the
-    RoT-Sandbox 4-experiment + image replication runs
-    (`PACKAGE_FEEDBACK.md`, package 0.0.2 used as-is, 3/4 pass with
-    the Pima 0.026 gap standing as a ticket — no gate widening):
-    (1) MPS float64 input-path crash — `fit_*` cast via
-    `_as_float_inputs` but `predict` / `get_order` / `score` and
-    `tune` validation forward raw float64; apply the cast on the
-    input path with regression tests (MPS-gated + CPU float64
-    autotune smoke). (2) Legacy-default drift — legacy
-    `RuleOfThumb` defaulted to `epochs=1500, lr=0.005` vs package
-    `500/0.05`; ship a docs table mapping legacy defaults per
-    experiment (a `legacy=` preset, if wanted, belongs to item 37's
-    autotune-space design, not a third track). (3) Batch-size guard
-    noise — the oversized-batch warning fires per autotune
-    candidate; warn once per fit. (4) Stochasticity disclosure —
-    document which replication-relevant stages are/aren't seeded
-    with variance expectations next to fidelity headlines (feeds
-    item 23); no API change. (5, from the image-run addendum)
-    `plot.saliency` ship-defaults `power=1.0/trim=2.0` vs the
-    paper-canonical `3.0/3.0` (`run.py` constants) despite the
-    legacy-port docstring — document the canonical values; a
-    default change is breaking and explicitly deferred. Action item
-    5 of the report (autotune scoring caveat) needs no tracking:
-     it validates item 37's premise. Not started.
-
-40. **Explain a fact-checking LLM with RoT, validated against attention;
-    extend to hallucination probes (research, P3).** Get predictions from
-    `bespokelabs/Bespoke-MiniCheck-7B` on a benchmark dataset, then fit
-    RoT on input-text embeddings — either the MiniCheck backbone's own
-    hidden states or the default text embedder — and gauge per-token
-    importances. Measure RoT accuracy by comparing against saliency maps
-    derived from the model's attention mechanism (which input tokens the
-    model looked at for its binary output; exact aggregation left open).
-    On success, extend the same protocol to
-     `https://www.hallucination-probes.com/`. Ambitious, low priority.
-     Not started.
-
-41. **Example: explaining with extra features beyond the model inputs
-    (P2).** Add a compelling example notebook showing RoT fitted on
-    inputs augmented with features the black box never saw — as in the
-    research monorepo's resumes experiment (`SyntheticResumeFiltering`,
-    which prefixes each resume with its demographic metadata before
-    embedding). Dummy data only, following the `examples/0*.ipynb`
-    hello-world convention so it executes CPU-fast on docs builds.
-    Exact augmentation style and dataset left open at implementation
-    time. Not started.
-
-42. **T2I gender-bias surrogate verification (research, P1).**
-    *Status: blocked* A recent surrogate-auditing paper on
-    demographic bias in text-to-image models ("Bias before Pixels")
-    reports over 9,000 object–activity text comb0s that activities
-    shape gender bias more than objects. On release, obtain the
-    paper's models/prompts/labels and test the claim two ways:
-    (a) independent replication — fit RoT-text on prompt tokens →
-    perceived-gender labels and rank activity vs object token
-    importances; (b) second-order audit — explain their provided
-    surrogate's predictions with RoT and compare all three rankings
-    (theirs, RoT-direct, RoT-of-surrogate). Pass = agreement within
-    a pre-registered tolerance; deviations become tickets against
-    either side. Constraints: don't regenerate 9,396×images on the
-    we can explain just the 3 bias surrogates; the gender-labeling 
-    method (theirs vs ours) is itself a variable;
-    generation costs and classifier choices logged per the item-36
-    protocol. Not started.
-
-## Release / maintenance
-
-18. PyPI release checklist: three-place version bump (`pyproject.toml`,
-    `src/ruleofthumb/__init__.py`, `tests/test_explain.py` assertion) plus
-    `ToDo.md` changelog entry, then commit, push, and tag — CI builds and
-    uploads (TestPyPI on `main`, PyPI on `v*` tags via trusted publishing),
-    RTD rebuilds; verify each stage per PUBLISH.md. (Standing ritual —
-    last exercised at release 0.0.2, `b4c32d4`.)
-
-33. **Conda-forge distribution alongside PyPI (P2).** Conda-forge is
-    currently absent everywhere (no recipe, no workflow mentions).
-    Work: provision a `ruleofthumb-rot` feedstock via a staged-recipes
-    PR (conda-forge name to confirm against the PyPI
-    `ruleofthumb-rot` vs import-name `ruleofthumb` mapping), with a
-    `meta.yaml` mapping the base and extras dependencies to conda
-    packages (verify torch CPU builds plus `transformers`,
-    `torchvision`, `captum` and `shap` availability; `noarch: python`
-    only if everything resolves, else an arch split). Thereafter rely
-    on the regro-cf autotick bot watching PyPI for version bumps
-    rather than custom automation, and extend item 18's checklist
-    plus `PUBLISH.md` with the feedstock step. Done when `mamba
-    install -c conda-forge ruleofthumb-rot` works from a clean env
-    and the bot picks up the next tag without manual intervention.
-    Standing cost, recorded here: feedstock maintenance (pin churn,
-    bot-PR merges). Not started.
-
-34. **Binder launch for all six example notebooks (P3).** Add repo2docker
-    config (`environment.yml` with mamba plus `postBuild`) and
-    launch badges (`README.md`, `docs-src/examples.md`) covering the
-    dummy-data hello-worlds (`01`, `02`, `03`, `06`) *and* the heavy
-    `04_hatexplain` / `05_salicon` notebooks, with explicit
-    mitigations rather than rewrites: the env must fit a shared
-    Binder session (torch plus `transformers`, `torchvision`,
-    `captum`, `shap` make a GB-scale image with slow cold builds),
-    the `04` / `05` download cells (dataset JSONs, MIT zips, model
-    weights) stay as-is but slow first launches get documented, and
-    the ~2 GB RAM ceiling is validated by actually launching each
-    notebook top-to-bottom from the badge. `mybinder.org` itself is
-    free (no account, no SLA, queued shared builds). Non-goal: no
-    notebook rewrites to fit Binder; the RTD-executed docs stay
-    canonical. Done when all six run badge-to-finish in a fresh
-    Binder session. Not started.
-
-## Non-goals
-
-- Bitstring/partial-information sampling scripts are not needed by design:
-  RoT operates per token/pixel.
+- **Black box**: the model being explained (we only see its answers, never its insides).
+- **Surrogate / RoT**: the small, simple model this package trains to copy the black box. Its weights are the explanation.
+- **Agreement / fidelity**: how often the surrogate gives the same answer as the black box.
+- **Reveal curve**: show the input to the surrogate most-important-part first and track how fast it gets the right answer. Faster means a better explanation.
+- **Floor**: the minimum score a test accepts.
+- **Seed**: the number that fixes the randomness of a run, so it can be repeated.
+- **Monorepo**: the original research code this package was built from.
+- **Backbone / embedding**: a pretrained model that turns raw text or images into numbers first (e.g. ModernBERT for text, MobileNet for images).
+- **Dropout**: during training, parts of the input are hidden at random so the surrogate learns from partial views.
 
 ---
 
-## Changelog
+## P0: do first
 
-- **v0.0.2** — breaking padding-API cleanup plus robustness hardening over
-  the published v0.0.1. Breaking: text/image entry points speak a single
-  `mask=` spelling — the `lengths=` / `attention_mask=` kwargs are gone
-  (build masks with the newly exported `lengths_to_mask`) and the
-  `sentinel_mask` migration helper is deleted. New: `ruleofthumb.vision`
-  module (`embed_images` / `ImageEmbeddings` / `DEFAULT_IMAGE_MODEL`,
-  the default backbone for image file paths); `embed_texts` gains
-  `revision=` (pinned to the new `DEFAULT_TEXT_REVISION` by default);
-  `autotune` forwards `n_classes` and extra factory kwargs to candidates
-  and the final refit. Behaviour: out-of-range labels fail fast with a
-  clear error, inference entry points always return host-side results,
-  oversized batches and low train agreement (`train_agreement_`) warn,
-  read-only input arrays are accepted silently, and explainer save files
-  load only under the exact package version that wrote them. No change to
-  the linear surrogate itself; omitting the new arguments keeps prior
-  behaviour.
-- **v0.0.1** — first public pre-alpha (version reset from internal v0.2.19
-  to reserve the PyPI name (`ruleofthumb-rot`) and invite early feedback). Entirely vibe-coded
-  from hand-written research code; expect breakage and
-  backwards-incompatible changes before any 1.0. Build backend switched
-  from hatchling to `uv_build`; package metadata completed (`LICENSE`
-  vendored, `license-files`, `project.urls` incl. Documentation,
-  `Development Status :: 1 - Planning`, `[docs]` extra). Full
-   documentation website (closes item 19): modality guides with executed
-   notebooks, workflows, migration notes, capacity guidance, per-module API
-   reference, and the test-suite report — built with one command
-   (`sphinx-build -W`), hosted on ReadTheDocs (versions + previews). GitHub
-   Actions added (item 17): checks (pytest/ruff/sphinx) on push/PR,
-   TestPyPI on `main` pushes, tag-gated PyPI releases via trusted
-   publishing; ritual documented in `docs-src/development.md`. Type
-   annotations added to the five public
-  functions griffe flagged (`embed_texts`, `autotune`, `load_images`,
-  `load_explainer`, `plot.saliency`); behaviour unchanged. No behaviour change.
-- **v0.2.19** — opt-in non-linear additive explanations: every factory and
-  RoT constructor accepts `nonlinear=` (a string — `"rbf"` Gaussian bumps or
-  `"hinge"` SELU hinges — or a dict `{"type": ..., ...}` whose extra keys are
-  forwarded as hyperparameters, e.g. `{"type": "rbf", "n_bases": 32}`). The
-  learned elementwise response `s` turns the surrogate into
-  `imp[k,i] = a[k,i]·(s(x[i]) + b[k,i])`: per-feature non-linear shape
-  curves shared across all input elements (parameter budget independent of
-  input size), for all modalities and class counts. Both responses are
-  residual with zero-initialised coefficients, so unfitted non-linear models
-  are exactly the linear ones; explanations stay exactly additive per
-  feature element, so plots, reveal curves and persistence work unchanged,
-  and the configuration round-trips through save files. Default behaviour is
-  unchanged: omitting `nonlinear` keeps the plain linear model.
-- **v0.2.18** — new `ruleofthumb.plot` module. Tabular: SHAP's signature
-  plots (waterfall, force, decision, bar, beeswarm) rendered by delegating
-  to the `shap` package (new base dependency) with RoT values packed into a
-  `shap.Explanation`; the SHAP base value maps to the RoT class bias `g_k`
-  and `f(x)` to the surrogate score (documented in the README's baseline
-  semantics table). Text: token highlighting as IPython-aware HTML and a
-  static matplotlib export, plus aggregated positive/negative/combined word
-  clouds (red = toward the class, blue = against — departing from the legacy
-  clouds' green/red for consistency with the legacy saliency overlays).
-  Images: port of the legacy saliency overlay (sign-preserving power
-  transform, independent percentile-trimmed normalisation, saturation
-  compression) over optional RGB input. All functions return matplotlib
-  figures or HTML; nothing auto-shows.
-- **v0.2.17** — automatic hyperparameter tuning: `ruleofthumb.autotune`
-  searches `learning_rate` / `batch_size` / `epochs` / `dropout_rate` /
-  `weight_decay` (grid or seeded random search over a customisable space,
-  default `DEFAULT_SPACE`) with a seeded validation split; candidates are
-  fitted through the regular factories with per-candidate seeds and scored
-  on held-out data by final-step reveal accuracy. Returns an `AutotuneResult`
-  whose `.explainer` is the winning configuration refit on all data, plus
-  `.best_params`, `.best_score` and best-first `.trials`. Supports all three
-  modalities including native string / file-path inputs.
-- **v0.2.16** — explainer persistence: `Explainer.save(path)` writes a
-  versioned payload (model `state_dict`, per-modality constructor config,
-  `mins` / `maxs`; primitives and tensors only, loadable with
-  `weights_only=True`) and `ruleofthumb.load_explainer(path, device=...)`
-  reconstructs the explainer without refitting — explanations, predictions
-  and reveal-curve outputs are identical after the round-trip. RoT models now
-  record their construction `sample_shape` (needed to rebuild text models,
-  whose `(T, E)` shape is not recoverable from the weights alone). Native
-  string / file-path ingestion is not persisted; reloaded explainers consume
-  numeric arrays.
-- **v0.2.15** — native image ingestion: `fit_image` (and `fit`'s
-  auto-detection, which routes image file extensions to the image modality)
-  accept image file paths directly; files are decoded with Pillow (RGB,
-  `[0, 1]` floats) either at native sizes (zero-padded with derived validity
-  masks) or resized + centre-cropped via `size=`, and `transform=` replaces
-  the whole pipeline for caller-supplied preprocessing (e.g. torchvision
-  weights transforms). New `ruleofthumb.image.load_images` /
-  `ImageBatch` mirror the text-side utilities. Explainers fitted from paths
-  accept the same paths back in every public method — each call re-loads the
-  files.
-- **v0.2.14** — native text ingestion: `fit_text` (and `fit`'s auto-detection)
-  accept raw strings directly, embedding them with the bundled
-  `answerdotai/ModernBERT-base` default and deriving attention masks
-  automatically; callers supply `tokenizer=` / `model=` to override the
-  embedder. Explainers fitted from strings accept the same strings back in
-  every public method (`get_explanation`, `get_order`, `ordered_predict`,
-  `score_ordering`, `score`, `predict`) — each call re-embeds the texts;
-  string inputs compose with no explicit padding arguments.
-- **v0.2.13** — new `ruleofthumb.embed` module: `embed_texts` tokenises and
-  embeds raw strings with a HuggingFace transformer (default
-  `answerdotai/ModernBERT-base`, overridable via `tokenizer=` / `model=`),
-  returning a frozen `TextEmbeddings` dataclass with rectangular zero-padded
-  `(N, tokens, dim)` float32 embeddings, a boolean attention mask ready for
-  `fit_text`, and decoded per-sample token strings aligned with the embedding
-  rows; batching, `max_length=` truncation and `device=` (auto-detect
-  cuda > mps > cpu) supported. Port of the legacy `gen_token_embeddings.py`
-  workflow as a library function.
-- **v0.2.12** — integration tier expanded and hardened; every case now asserts
-  the RoT surrogate's own **predicted-class accuracy** against its black box
-  plus explicit feature-importance anchors: breast-cancer explanations track
-  the LogisticRegression coefficient profile, COMPAS explanations rank
-  `priors_count` top for GBM/SVC/MLP black boxes, wine models agree on shared
-  dominant features, text top tokens carry sentiment words (with a
-  "brilliant" > "awful" pair check), pet saliency maps reproduce committed
-  reference heatmaps and point in the dog direction for GPT-"dog" images, and
-  the 10-class image confusion matrix is asserted to collapse near the
-  majority baseline (documenting the spatially-shared-weight capacity limit).
-  New cases mirror real DS workflows via pandas: the legacy GPT-4o-mini
-  cat-vs-dog experiment miniaturized (raw JPEGs + labels committed from
-  `ExplanationExampleRemote/DATA` read-only; MobileNetV3-Small features and
-  all embeddings recomputed afresh every run — never cached), COMPAS
-  two-year recidivism fetched once by the generator with the canonical
-  ProPublica filters, and sklearn wine. Typical black boxes added:
-  GradientBoosting/SVC(RBF)/MLP per dataset. `pandas` joined the `[dev]`
-  extra.
-- **v0.2.11** — integration-test tier (`tests/integration/`) running against
-  real data and models: breast-cancer + LogisticRegression (tabular binary),
-  digits + RandomForest (tabular multiclass), fixed film reviews +
-  distilbert-SST-2 (text binary), and digit images through committed TinyCNN
-  black boxes (image binary and 10-class). All black-box models/datasets are
-  built once by `tests/integration/generate_artifacts.py` and committed under
-  `tests/integration/artifacts/` (with a provenance `manifest.json`); the test
-  suite trains nothing and downloads nothing except HF-cached SST-2 weights.
-  New unit tests cover the remaining cells: multiclass text (reveal pipeline,
-  per-class padding, mask equivalence, seeding) and binary images via the
-  facade with a conv black box. `scikit-learn` moved to the `[dev]` extra —
-  it is only needed to (re)generate artifacts, never at runtime.
-- **v0.2.10** — unified explainer facade (breaking): the `RuleOfThumb` /
-  `TextRuleOfThumb` wrapper classes are replaced by the public `Explainer`
-  class plus `fit` / `fit_tabular` / `fit_text` / `fit_image` factories
-  (`fit` auto-detects the modality from input ndim). Adds the previously
-  missing image wrapper (signed per-pixel explanations, channels summed,
-  `(N, H, W)` masks) and public delegating reveal-pipeline methods
-  (`get_order`, `ordered_predict`, `score_ordering`, `score`, `predict`);
-  raw models are unchanged.
-- **v0.2.9** — `device=` parameter on all three RoT models and both explainer
-  wrappers (`None` auto-detects cuda > mps > cpu; default cpu otherwise).
-  Fit and inference move inputs to the model's device; raw-model methods
-  return tensors on the model's device while `get_order` ranks host-side,
-  `score_ordering` returns CPU tensors, and wrapper `get_explanation` still
-  returns numpy arrays.
-- **v0.2.8** — multiclass generalisation: `TextRuleOfThumb.get_explanation`
-  follows the tabular semantics (signed class-1 `[N, tokens]` for binary,
-  full per-class `[N, n_classes, tokens]` for K > 2); `score_ordering`
-  defaults to per-step accuracy for any number of classes and accepts
-  `return_confusion=True` for per-step K×K confusion counts (rows = true
-  label); custom binary-count `metric=` callables are retained.
-- **v0.2.7** — tabular `RuleOfThumb.get_explanation` returns signed,
-  SHAP-comparable importances: class-1 contributions for binary tasks
-  (additive with the class-1 bias), full per-class output for K > 2; unused
-  private helpers `_get_exp_abs_sum` / `_get_exp_sum` / `_get_exp_0m1` /
-  `_get_exp_1m0` removed.
-- **v0.2.6** — the tabular/text explainer wrappers accept `n_classes=` (default
-  2, previously hard-coded) and pass it through to the underlying models.
-- **v0.2.5** — reproducible seeding: `training_loop` and all three `fit`
-  methods accept `seed=` (covering batch shuffling and dropout draws; fits
-  seed once up front so the whole fit is one deterministic stream), and the
-  tabular/text wrappers thread `seed=` through.
-- **v0.2.4** — training hyperparameters are exposed as arguments: `fit` takes
-  `pretrain_epochs=` (was hard-coded 5) and `weight_decay=` (was hard-coded
-  0.01) on all three variants; `training_loop` takes `swa_burn_in=` (legacy
-  default `epochs // 10 + 1`); the tabular/text wrappers thread
-  `pretrain_epochs=`, `weight_decay=` and (text) `l1_penalty=` through.
-- **v0.2.3** — `get_order` uses a stable descending sort, so units with equal
-  importance rank deterministically (earlier index first) instead of
-  nondeterministically under quicksort.
-- **v0.2.2** — `mins` / `maxs` are now instance attributes set in `RoT.__init__`
-  (±inf defaults) instead of class attributes, so unfitted models no longer
-  share state across instances.
-- **v0.2.1** — reveal curves default to whole units (token per step for text,
-  pixel per step for images); `granularity="element"` restores per-element
-  curves.
-- **v0.2.0** — explicit mask-based padding replaces the implicit `-1`
-  sentinel (breaking); ragged text via `pad_sequences`, mixed-size images via
-  `pad_images` or per-sample looping.
-- **v0.1.x** — initial package port of the original experiment code,
-  including dead-code cleanup.
+### 22. Make the test suite pass on any machine (P0)
+
+- **What:** long training runs can land in slightly different places on different computers, because each machine's math libraries round numbers a little differently. So a test that says "score must be at least X" can pass on one machine and fail on another. The fix has two parts:
+  - **Tests that check the output of a trained model** (explanations, plots, save/load, recovering a known answer) load saved weights instead of training. The result is then exact everywhere, so they can use tight checks. The weights are raw `.pt` files, made by `tests/mint_unit_weights.py`.
+  - **Tests that must train live** (repeatability with a seed, tuning, raw-input fits, comparisons between fits) keep training. Their floors are measured by running many times (several seeds, thread counts and devices): floor = worst result seen minus a small margin, written down in `TEST_SUITE.md`.
+  - Also: make training deterministic where possible, and use bigger test datasets (digits 500 → 1797, COMPAS 800 → 2000, reviews 31 → ~60, image digits 500 → 1000+).
+- **Why:** a test suite that fails on some machines for no real reason can't be trusted.
+- **Done when:** CI is green, saved-weight tests use tight checks, and live tests use measured floors.
+- **Status:** in progress. Our work is on branch `todo22` (not merged yet).
+
+### 36. Reproduce the research experiments with the package (research, P0)
+
+- **What:** the monorepo has 9 hand-tuned experiments: adversarial, scientific, ai_auditing, explanation_example (local and remote), openxai, resume, movie, judicial and runtimes. A plain install of the package (using `fit()` and `autotune`) must reach the same headline numbers.
+- **How**, one experiment at a time, cheapest first (Local → Scientific → OpenXAI → Adversarial → Auditing → Resume → Movie → Judicial → Pets-5000):
+  1. Try `fit()` with defaults and record the gap.
+  2. Try `autotune` and record the gap.
+  3. Any setting the research code hand-picked that autotune can't find becomes a ticket to widen autotune's search.
+  4. Translate old habits: the `-1` padding marker becomes `mask=`, unit vs element granularity, and "always 2 classes" becomes the real class count.
+  5. Every bug or missing feature found becomes package work, done until the experiment passes.
+- **Pass:** headline fidelity / wAUROC within ±0.02, or within the paper's own error bars if those are wider.
+- **Rules:**
+  - Never call paid APIs again; reuse the saved GPT CSVs.
+  - Never rerun SHAP/LIME; compare against their saved outputs.
+  - Run the heavy experiments last.
+  - Never change the monorepo; only read its data and saved outputs.
+  - Keep working notes in `scratch/replication/` (not committed).
+  - HateXplain and SALICON are out of scope (already done the other way round).
+- **Gaps already known:** hand-tuned settings everywhere; padding marker vs mask; `RoT_additive`/RBF only in the OpenXAI patch; the saliency power/trim view is missing; extra (non-input) features must be added by hand.
+- **Why:** proves the package really does what the research code did, without hand-tuning.
+- **Done when:** all 9 pass with no open gaps, and every package fix they needed has shipped.
+- **Status:** not started.
+
+### 37. Make tuning the default (P0)
+
+- **What:** `fit`, `fit_tabular`, `fit_text` and `fit_image` get a `tune=` option, on by default:
+  - `tune=True` runs `autotune()`: it tries several training settings automatically and keeps the best.
+  - A dict customises the search (`space`, `n_candidates`, `scoring`).
+  - `tune=None` / `False` runs today's single fixed training (for tests and when speed matters).
+  - `autotune` must never call itself in a loop (recursion guard).
+  - The result is still an `Explainer`, now with `best_params_` and `best_score_`. `autotune()` itself keeps returning `AutotuneResult`.
+- **Takes over** item 29 (stop training early and drop bad candidates, which keeps the extra cost down) and item 30 (`evaluate()`).
+- **Side work:** tests that check fixed behaviour pass `tune=None` (otherwise the suite gets about 8× slower); examples and docs get re-run; version bump, changelog and a README note ("`tune=None` gives the old behaviour").
+- **Why:** most users never tune, so they get worse fits than they could.
+- **Done when:** the test suite is green with tuning as the default (with its run time reported), the docs recommend `tune=True`, and items 29/30 are either done here or explicitly moved out.
+- **Status:** not started upstream. Our work is on branch `todo37` (not merged yet).
+
+### 38. Dropout audit: write down why, don't change it (P0)
+
+- **What:** the package hides whole units during training (a full token or a full pixel). The research code mostly hid single values. The picture differs per data type:
+  - **Tabular:** no difference.
+  - **Text:** the research code disagreed with itself. The package matches the Judicial version (whole tokens).
+  - **Images:** a real difference. The research code hid each colour channel of each pixel separately; the package hides whole pixels.
+- **Decision already made: keep the package's way.**
+  - At scoring time whole units are revealed, so training should hide whole units too.
+  - Only whole-unit hiding at a 0.5 rate makes every partial view equally likely (see item 28).
+  - It works cleanly with padding and needs 576× fewer random draws for images.
+  - A test showed switching would gain only +0.002 (noise) and would break every saved weight and test floor.
+- **Work:**
+  1. Write this reasoning into code comments and the docs, where it exists nowhere today.
+  2. Describe what dropout does to the result, without changing behaviour. Having dropout at all matters a lot: training without dropout closes the image gap, and zeroing the `b` weights ruins fidelity.
+- **Why:** so nobody "fixes" this later by mistake.
+- **Status:** not started.
+
+---
+
+## P1: next
+
+### 20. Better documentation (P1)
+
+- **What:** the docs are complete, but they undersell the package. Work, in order:
+  - a) overview essays: when RoT fits, how it differs from other explainers, how to judge trust;
+  - b) a gallery of real-task examples per data type, built from the test data;
+  - c) a visual gallery of every plot type;
+  - d) benchmarks;
+  - e) release-notes and contributing pages, from the existing runbooks.
+- **Presentation, keeping the current theme:** logo and favicon, landing image, a "pre-alpha" banner, gallery thumbnails, tidier navigation, a little custom CSS.
+- **Not doing:** switching the docs theme.
+- **Status:** not started.
+
+### 21. Publication-quality plots with `shap-editorial` (P1)
+
+- **What:** `shap-editorial` draws nicer beeswarm, waterfall, bar and scatter plots from `shap.Explanation` objects. It's young and has a single maintainer, so pin the exact version and treat it as replaceable. It's already a dependency, and our tabular plots already build `shap.Explanation` objects.
+- **Steps:**
+  1. Check that our objects work with it as-is.
+  2. If they do, add editorial versions (`plot.editorial_*` or a `style=` option), starting with tabular waterfall, bar and beeswarm.
+- **Decisions needed:** colours (editorial uses grey → red, while ours is red = pushes toward the class, blue = pushes against); multiclass (not supported upstream, so plot one class at a time).
+- **Ship with:** tests, a gallery demo (item 20c) and docs updates.
+- **Status:** not started.
+
+### 24. Measure explanation quality beyond fidelity (research, P1)
+
+- **What:** "copies the model well" (fidelity) and "matches what humans think is important" (plausibility) are different things and must be measured separately:
+  - deletion/insertion curves, always compared against a random baseline;
+  - rank-agreement measures;
+  - always include simple controls, such as "look at the centre of the image", which often beats learned maps at matching humans.
+- **Notes:** short or noisy inputs make it hard for the surrogate to pick up rare words (see item 16). Models that almost always give one answer need special handling before explaining them.
+- **Status:** no commitment to build anything yet.
+
+### 29. Stop training when it's done (P1, handled under item 37)
+
+- **What:** instead of a fixed number of epochs, stop when agreement stops improving (with a maximum). Let `autotune` give up early on settings that are clearly losing, instead of training every candidate to the end.
+- **Why:** saves time; it's the main way to make tuning-by-default affordable.
+- **Related:** item 16 (capacity limits) and item 23 (results differ across machines).
+
+### 30. An `evaluate()` method (P1, handled under item 37)
+
+- **What:** `Explainer.evaluate(...)` reports:
+  - a) **fit agreement** on the training data and on a held-back part, warning below 0.75;
+  - b) **reveal gap**: how much better the explanation's order is than a random order (only when asked);
+  - c) **match with human markings**, only if the user provides them (text first), compared against random importances.
+- **Current defaults it records:** `autotune` scores by plain agreement unless `scoring="reveal"` is given, and fitting never runs the reveal machinery.
+- **Not in scope:** repeat fits for stability, per-slice breakdowns, centre-guess controls, new dependencies, and scoring by changing inputs to the black box (the package never has the model, only its answers).
+
+### 31. Warn when the surrogate gets a row wrong (P1)
+
+- **What:** if a user passes the model's answers to `get_explanation(..., y_outputs=...)` and the surrogate disagrees on some rows, warn once per call with the number of rows and their indices, because explanations for those rows are meaningless.
+  - No error and nothing blocks; nothing changes if `y_outputs` isn't passed.
+  - Plot helpers stay silent.
+  - Wrong length raises a `ValueError`.
+- **Tests:** wrong rows warn with the right indices, correct rows stay quiet, plus multiclass and masked-text cases.
+- **Status:** not started.
+
+### 39. Fixes found by the sandbox replication (P1)
+
+- **What:** the RoT-Sandbox runs (3 of 4 experiments passed; the Pima gap of 0.026 stays open as its own ticket) found:
+  1. A crash on Apple GPUs (MPS) with float64 input in `predict`, `get_order`, `score` and tuning validation. Fix: convert inputs the way `fit_*` already does, plus tests.
+  2. The old defaults differ from the package's (old: 1500 epochs, learning rate 0.005; package: 500 and 0.05). Add a docs table of the old defaults per experiment. A `legacy=` preset, if wanted, belongs to item 37.
+  3. The "batch too big" warning repeats for every autotune candidate. Warn once per fit.
+  4. Document which steps are random or seeded, and how much results are expected to vary (feeds item 23). No API change.
+  5. `plot.saliency` defaults are `power=1.0, trim=2.0`, but the paper used `3.0, 3.0`. Document the paper values; changing the default would break things, so that's deferred.
+- **Status:** not started.
+
+### 42. Check a gender-bias study on text-to-image models (research, P1)
+
+- **Status:** blocked until the paper releases its data.
+- **What:** the paper "Bias before Pixels" claims that activities shape gender bias in text-to-image models more than objects do (over 9,000 object/activity prompts). Once released:
+  - a) fit RoT-text on prompt words → perceived gender, and compare how important activity words are against object words;
+  - b) explain their own surrogate with RoT and compare all three rankings.
+- **Pass:** the rankings agree within a tolerance fixed in advance.
+- **Limits:** don't regenerate all ~9,396 images (explaining their 3 surrogates is enough); the way gender is labelled is itself a variable; log costs as in item 36.
+
+---
+
+## P2: later
+
+### 23. Results that differ across machines (research, P2)
+
+- **What:** long fits on small datasets reach different results on different machines (the reason for item 22). Measure how big the differences are, and try fixes: early stopping, stronger regularisation, weight averaging, ensembles.
+- **Done when:** explanations and fidelity come out the same on every machine. Any API change needs a migration note.
+- **Status:** not started upstream. A measurement script exists locally (`tests/integration/measure_stability.py`), not committed.
+
+### 25. Compare image explanations against a "centre" guess (research, P2)
+
+- **What:** when checking image explanations against where humans look, a plain "look at the centre" guess beats learned maps. So any claim that saliency finds what people look at must beat the centre guess by a clear margin, or the docs must say plainly that saliency is not gaze prediction.
+- **Status:** no commitment to build anything yet.
+
+### 32. Logo and graphics refresh (P2)
+
+- **What:** redraw the logo (light and dark), favicons, README banner, and the hero/card figures (made by `docs-src/_figures/generate_figures.py`, dummy data only).
+- **Limits:** static files plus the README header and the docs front page only. No change to `plot.py`, no theme switch, and keep red = toward / blue = against.
+- **Done when:** every asset exists in a light/dark pair, every page using them looks right in both themes, and the ReadTheDocs build is green.
+- **Status:** not started.
+
+### 33. Publish on conda-forge as well as PyPI (P2)
+
+- **What:** the package isn't on conda-forge yet.
+  1. Create the conda package recipe through a staged-recipes PR, after confirming the name (`ruleofthumb-rot` on PyPI vs `ruleofthumb` when imported).
+  2. Map the dependencies to conda packages (check that CPU torch, transformers, torchvision, captum and shap are available).
+  3. Let conda-forge's bot pick up new versions automatically, and add this step to the release checklist (item 18) and `PUBLISH.md`.
+- **Done when:** `mamba install -c conda-forge ruleofthumb-rot` works in a clean environment, and the bot picks up the next release by itself.
+- **Cost:** ongoing upkeep of the conda package.
+- **Status:** not started.
+
+### 35. Interactive explanation viewers (exploratory, P2)
+
+- **What:** there are no interactive plots today. Prototype two approaches (`anywidget` views and `ipywidgets` sliders around matplotlib), with a reveal-step slider, saliency power/trim sliders and word hover, then pick the better one.
+- **Rules:** a new optional extra only; `plot.*` keeps returning normal figures (widgets wrap them); a static version always available; no new required dependencies.
+- **Ship:** the decision plus one pilot widget with tests, a gallery demo (item 20c) and docs.
+- **Done when:** the pilot works in JupyterLab and VSCode (and Colab/ReadTheDocs if possible).
+- **Status:** not started.
+
+### 41. Example: explaining with extra features the model never saw (P2)
+
+- **What:** a new example notebook where RoT is fitted on the inputs plus extra information the black box never used, as in the monorepo's resume experiment, which adds demographic info to each resume before embedding.
+- **Limits:** dummy data only, quick on a CPU, like the existing examples `01` to `06`.
+- **Status:** not started.
+
+---
+
+## P3: maybe, low priority
+
+### 16. Optional per-position weights (P3, deferred: rich backbones already cover real use)
+
+- **What:** the text and image surrogates use one shared set of weights for every position. In effect they only see a summary: the average word embedding for text, and the total of each channel over the whole image for images.
+  - **Good:** explanations don't depend on where things are, and there are few weights to learn.
+  - **Limit:** the surrogate can only be as good as that summary is at telling classes apart. Raw single-channel digit images reduce to "total ink", so 10-class fidelity stays near "always guess the most common class". Adding coordinates gets ~0.35, the TinyCNN features ~0.49, and MobileNet features ~0.99. For text, word order is invisible.
+- **Advice for users:** use rich backbones (transformer embeddings, MobileNet features) and check the surrogate's accuracy.
+- **Only if raw-input multiclass is really needed:** add an opt-in mode with separate weights per position, behind a flag, keeping today's behaviour as the default.
+- **Status:** deferred upstream. Our work (`share_weights=`) is on branch `todo-16` (not merged).
+
+### 27. Validate on full datasets at scale (research, P3)
+
+- **What:** the tests use slices (3000 text posts, 150 images) because the development machine can't hold the full embeddings (about 4.5 GB) or finish long fits quickly. Two tracks:
+  1. Run the human-annotation benchmarks in full on a big machine (GPU), and record how slice and full results differ.
+  2. Train from disk in chunks, so data that doesn't fit in memory still works.
+- **Status:** no commitment to build anything yet.
+
+### 34. "Launch in Binder" buttons for all six example notebooks (P3)
+
+- **What:** add the Binder setup (`environment.yml` plus `postBuild`) and launch buttons (README and the docs examples page) for all six notebooks, including the heavy `04_hatexplain` and `05_salicon`.
+  - The environment is big (torch, transformers, etc.), so the first launch is slow; document that.
+  - Keep the download cells as they are.
+  - Check the ~2 GB memory limit by actually launching each notebook.
+- **Not doing:** rewriting notebooks to fit Binder. The docs on ReadTheDocs stay the main source.
+- **Done when:** all six run start to finish from their button in a fresh Binder session.
+- **Status:** not started.
+
+### 40. Explain a fact-checking LLM (research, P3)
+
+- **What:** get predictions from `bespokelabs/Bespoke-MiniCheck-7B` on a benchmark, fit RoT on text embeddings (the model's own hidden states, or the default embedder), and compare the word importances with saliency taken from the model's attention. If that works, repeat it on `https://www.hallucination-probes.com/`.
+- **Status:** ambitious, low priority, not started.
+
+---
+
+## Standing task (no priority, repeated every release)
+
+### 18. Release checklist for PyPI
+
+1. Bump the version in 3 places: `pyproject.toml`, `src/ruleofthumb/__init__.py`, and the assertion in `tests/test_explain.py`.
+2. Add a changelog entry.
+3. Commit, push and tag. CI then builds and uploads (TestPyPI on `main`, real PyPI on `v*` tags), and ReadTheDocs rebuilds.
+4. Check each step as described in `PUBLISH.md`.
+
+Last done for version 0.0.2 (commit `b4c32d4`).
+
+## Done / parked
+
+### 28. Dropout rates other than 0.5 (marked done: `8a9b902`)
+
+- Dropout is fixed at 0.5 on purpose: only 0.5 makes every partial view equally likely. No constructor, factory or `autotune` search accepts a `dropout_rate`, and `test_dropout_rate_is_not_tunable` keeps it that way.
+- Reopen only if the method is ever extended to uneven reveal patterns. Then add the option behind a flag, put it back into the search, and reweight reveal scoring to match.
+
+## Not doing (non-goals)
+
+- No bitstring / partial-information sampling scripts: RoT already works per token or pixel, so they aren't needed.
+
+---
+
+## Changelog (newest first)
+
+- **v0.0.2**: padding clean-up and safety checks.
+  - Text/image functions take only `mask=` (`lengths=` and `attention_mask=` were removed; use `lengths_to_mask`).
+  - New `ruleofthumb.vision` module provides the default image backbone, and `embed_texts` gets a pinned `revision=`.
+  - `autotune` passes `n_classes` and other settings through.
+  - Clear errors for out-of-range labels, warnings for oversized batches and low agreement, and read-only arrays are accepted.
+  - Save files load only with the same package version that wrote them.
+- **v0.0.1**: first public pre-alpha; the version was reset from the internal 0.2.19, under the PyPI name `ruleofthumb-rot`. New build backend (`uv_build`), a full docs website on ReadTheDocs, GitHub Actions (tests, TestPyPI, PyPI on tags), and type hints on 5 public functions. No behaviour change.
+- **v0.2.19**: optional non-linear explanations (`nonlinear="rbf"` or `"hinge"`); the default stays linear.
+- **v0.2.18**: new `plot` module: SHAP-style plots for tabular data, word highlighting and word clouds for text, saliency overlays for images.
+- **v0.2.17**: `autotune`: automatic search for good training settings.
+- **v0.2.16**: save and load explainers (`Explainer.save`, `load_explainer`).
+- **v0.2.15**: `fit_image` accepts image file paths directly.
+- **v0.2.14**: `fit_text` accepts raw strings directly (ModernBERT embeddings by default).
+- **v0.2.13**: `embed_texts` turns raw strings into embeddings.
+- **v0.2.12**: more and stronger integration tests (COMPAS, wine, GPT cat/dog and more), each checking the surrogate's accuracy and known important features.
+- **v0.2.11**: integration tests on real datasets and models, saved in the repo, so the tests train nothing and download nothing.
+- **v0.2.10**: one `Explainer` class plus `fit` / `fit_tabular` / `fit_text` / `fit_image` replace the old wrapper classes (breaking).
+- **v0.2.9**: `device=` option (auto picks cuda, then mps, then cpu).
+- **v0.2.8**: text explanations and reveal scoring work with more than 2 classes.
+- **v0.2.7**: tabular explanations are signed and comparable to SHAP; unused helpers removed.
+- **v0.2.6**: `n_classes=` option (it was fixed at 2).
+- **v0.2.5**: `seed=` option for repeatable fits.
+- **v0.2.4**: training settings exposed as options (`pretrain_epochs`, `weight_decay`, `swa_burn_in`, `l1_penalty`).
+- **v0.2.3**: `get_order` breaks ties the same way every time.
+- **v0.2.2**: `mins` / `maxs` belong to each model instead of being shared.
+- **v0.2.1**: reveal curves step one token or pixel at a time by default (`granularity="element"` gives the old behaviour).
+- **v0.2.0**: explicit masks replace the `-1` padding marker (breaking).
+- **v0.1.x**: first port of the research code, with dead code removed.
