@@ -45,6 +45,29 @@ settings passed in, the package passes **7 of 9** (adds Movie and Judicial). Sci
 come close with the "b = 0" diagnosis, which reproduces the old code. The old code itself reproduces the paper
 everywhere we could check it.
 
+## 2b. Second run (seed 1) of the failing experiments, and Pets with the old code's seed
+
+Run 2026-10-12 on the H100, package defaults and package with legacy settings only. Average = mean of seed 0 and
+seed 1. Pets seed 1 matches the old code's hard-coded seed.
+
+| Experiment | Variant | Paper | Seed 0 | Seed 1 | Average | Pass (average) |
+|---|---|---|---|---|---|---|
+| ScientificDiscovery | defaults | acc 0.714, Age last (~0) | 0.760, Age 5th | 0.766, Age 4th | 0.763 | FAIL |
+| ScientificDiscovery | legacy settings | same | 0.773, Age 5th | 0.779, Age 6th | 0.776 | FAIL |
+| OpenXAI (COMPAS LR) | defaults | 16 bar / slope / baseline targets | g[1] 1.183 | g[1] 1.181 | 1 of 16 targets | FAIL |
+| OpenXAI (COMPAS LR) | legacy settings | same | g[1] 0.903 | g[1] 0.904 | 7 of 16 targets | FAIL |
+| Movie | defaults (batch 64) | wAUROC 0.72 | 0.6788 | 0.6473 | 0.6631 | FAIL |
+| Movie | legacy settings | wAUROC 0.72 | 0.7267 | 0.7263 | 0.7265 | PASS |
+| Judicial | defaults (batch 32) | wAUROC 0.7669 | 0.7414 | 0.7356 | 0.7385 | FAIL |
+| Judicial | legacy settings (stock, batch 32) | wAUROC 0.7669 | 0.7507 | 0.7511 | 0.7509 | PASS |
+| Judicial | legacy settings (low-memory loss, batch 128) | wAUROC 0.7669 | 0.7572 | 0.7553 | 0.7562 | PASS |
+| Pets-5000 | defaults | test 97.60% | 97.04% | 96.72% | 96.88% | PASS |
+| Pets-5000 | legacy settings | test 97.60% | 97.36% | 97.04% | 97.20% | PASS |
+
+The second run changes no verdict: the failures are systematic (the `b` start for ScientificDiscovery and OpenXAI,
+the default settings for Movie and Judicial), not run-to-run noise. OpenXAI and Judicial seed-1 numbers also match
+earlier seed-1 runs exactly.
+
 ## 3. Why the package differs from the monorepo
 
 1. **Where `b` starts (tabular).** The old code meant to start `b` at minus the data mean, but its line
