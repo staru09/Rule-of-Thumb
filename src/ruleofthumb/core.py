@@ -122,6 +122,13 @@ class RoT(torch.nn.Module):
         return self.a[None] * (self._respond(points)[:, None] + self.b[None])
 
     def stochastic_importance(self, points, mask=None):
+        # Dropout granularity: one keep/drop draw per reveal unit (imp.shape[2:]),
+        # shared across classes, never per weight element. Reveal units are hidden
+        # wholesale when scoring (unit-granularity reveal curves), so training must
+        # sample the same intervention distribution, and only whole-unit drops at
+        # 0.5 stay uniform over reveal subsets. Tabular units are features (N, d),
+        # which already matches the legacy per-feature draw. See the granularity
+        # note in docs-src/capacity.md for the per-modality picture and rationale.
         imp = self.importance(points, mask=mask)
         mask_shape = (points.shape[0],) + tuple(imp.shape[2:])
         keep = (torch.rand(mask_shape, device=self.device) > self.dropout_rate).float()

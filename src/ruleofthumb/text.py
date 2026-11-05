@@ -115,6 +115,11 @@ class RoTText(RoT):
         return mask[:, None, :, None].to(imp.dtype) * imp
 
     def stochastic_importance(self, points, mask=None):
+        # Reveal units are tokens: one keep/drop draw per token (N, T), shared
+        # across the embedding dims and intersected with the padding mask. This is
+        # the legacy Judicial RoT_text behaviour; legacy MovieReview instead drew
+        # per (token, embedding element), a variant the package does not follow.
+        # See the granularity note in docs-src/capacity.md.
         if mask is not None:
             mask = torch.as_tensor(mask, device=self.device)
         imp = self.importance(points, mask=mask)
