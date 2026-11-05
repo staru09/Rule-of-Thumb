@@ -80,3 +80,43 @@ averaging has discarded order or position. The
 [Hatexplain](notebooks/04_hatexplain.ipynb) and
 [Gaze](notebooks/05_salicon.ipynb) notebooks explore both sides
 openly, baselines included.
+
+## Why a whole reveal unit is dropped at a time
+
+While it trains, RoT hides a random half of the input each step and
+learns weights that still recover the model's answer from what is left
+(the dropout rate is fixed at 0.5). The question is what "a piece of the
+input" means: a whole reveal unit, or a single element inside one.
+
+The package drops a whole reveal unit at a time, and never a single
+element:
+
+| Modality | What one draw hides | Shape of the keep mask | Legacy behaviour |
+|---|---|---|---|
+| Tabular | one feature | `(N, d)` | same (no divergence) |
+| Text | one token, all its embedding dims | `(N, T)`, then the padding mask | matches Judicial `RoT_text`; MovieReview instead dropped per (token, element) |
+| Image | one pixel, all its channels | `(N, H, W)`, then the padding mask | diverges: legacy dropped per (channel, pixel), `(N, C, H, W)` |
+
+The reasons to keep whole-unit drops:
+
+- Reveal curves hide a whole unit at a time when they score fidelity, so
+  training should sample the same thing it will be judged on.
+- Only whole-unit drops at 0.5 are uniform over the reveal subsets.
+- Padding stays clean: the keep mask intersects the validity mask once.
+- On images it is about 576 times fewer random draws.
+
+The case for the old per-element drop was exact fidelity to two shipped
+results (the pets-5000 and MovieReview experiments) and slightly finer
+per-step noise. Measured, the difference is nothing: fitting the same
+MobileNet feature maps both ways moved test fidelity by about 0.006,
+within run-to-run noise, while switching would invalidate every committed
+weight and test floor. So the package keeps the whole-unit drop.
+
+Two related measurements on the same image fit, for context. The dropout
+*rate* can move between 0 and 0.9 with test fidelity staying around
+0.93 to 0.97, so the fit is not sensitive to it here; 0.5 is kept as the
+rate that is uniform over reveal subsets, not as a tuned optimum. Starting
+the `b` offset at 0 instead of at minus the mean costs only about 0.01 of
+fidelity on these image features. (The large fidelity loss from a
+zero-started `b` shows up on standardised tabular data, not on images; see
+the OpenXAI and ScientificDiscovery replication notes.)

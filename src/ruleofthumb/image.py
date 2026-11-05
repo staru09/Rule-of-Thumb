@@ -200,6 +200,14 @@ class RoTImage(RoT):
         return imp * mask.unsqueeze(1).unsqueeze(1).to(imp.dtype)
 
     def stochastic_importance(self, points, mask=None):
+        # Reveal units are pixels: one keep/drop draw per pixel (N, H, W), shared
+        # across the pixel's channels and intersected with the padding mask. This
+        # diverges on purpose from legacy, which drew per (channel, pixel)
+        # (N, C, H, W); keeping whole pixels matches how pixels are hidden wholesale
+        # at scoring time and uses 576x fewer draws. Fitting the same MobileNet
+        # feature maps both ways moved test fidelity by about 0.006 (noise), so the
+        # package keeps the whole-pixel draw rather than invalidate every committed
+        # weight and floor. See the granularity note in docs-src/capacity.md.
         if mask is not None:
             mask = torch.as_tensor(mask, device=self.device)
         imp = self.importance(points, mask=mask)
