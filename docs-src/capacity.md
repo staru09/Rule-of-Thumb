@@ -112,11 +112,75 @@ MobileNet feature maps both ways moved test fidelity by about 0.006,
 within run-to-run noise, while switching would invalidate every committed
 weight and test floor. So the package keeps the whole-unit drop.
 
-Two related measurements on the same image fit, for context. The dropout
-*rate* can move between 0 and 0.9 with test fidelity staying around
-0.93 to 0.97, so the fit is not sensitive to it here; 0.5 is kept as the
-rate that is uniform over reveal subsets, not as a tuned optimum. Starting
-the `b` offset at 0 instead of at minus the mean costs only about 0.01 of
-fidelity on these image features. (The large fidelity loss from a
-zero-started `b` shows up on standardised tabular data, not on images; see
-the OpenXAI and ScientificDiscovery replication notes.)
+## What the dropout rate and the starting `b` change in the explanation
+
+Agreement alone can hide a change in the explanation, so a follow-up
+compared the explanations themselves. It refits with only the dropout
+rate or the starting value of `b` changed (the integration tests' fit
+settings: 300 epochs, full batch, learning rate 0.05; three seeds per
+setting) on two committed datasets: MobileNetV3-Small feature maps of the
+1,797 digits (TinyCNN labels) and COMPAS (the SVC's labels). Everything
+is measured on a held-out 20% against the default fit (rate 0.5, `b`
+started at minus the mean). "Map corr" is the average per-example
+correlation with the default fit's maps; "reveal gap" is the reveal-curve
+area minus that of a random order; "seed corr" is the map correlation
+between seeds.
+
+| Data | Dropout rate | `b` start | Agreement | Map corr | Reveal gap | Seed corr |
+|---|---|---|---|---|---|---|
+| Digits (MobileNet) | 0 | −mean | 0.944 | 0.75 | −0.005 | 1.00 |
+| Digits (MobileNet) | **0.5** | **−mean** | **0.954** | **0.90** | **+0.006** | **0.89** |
+| Digits (MobileNet) | 0.75 | −mean | 0.936 | 0.87 | +0.004 | 0.86 |
+| Digits (MobileNet) | 0 | 0 | 0.928 | 0.63 | −0.084 | 1.00 |
+| Digits (MobileNet) | 0.5 | 0 | 0.961 | 0.71 | −0.045 | 0.99 |
+| COMPAS | 0 | −mean | 0.950 | 0.91 | +0.143 | 1.00 |
+| COMPAS | **0.5** | **−mean** | **0.892** | **0.99** | **+0.082** | **0.99** |
+| COMPAS | 0.75 | −mean | 0.882 | 0.99 | +0.074 | 0.98 |
+
+(The default row's map corr compares its other two seeds with the first.)
+
+- **The dropout rate shapes the explanation more than the agreement.** On
+  the digits, agreement stays within 0.94–0.96, but the maps fitted
+  without dropout correlate only 0.75 with the default's, against 0.90
+  between two default fits. Dropout also makes fits differ from seed to
+  seed: a full-batch fit without it is deterministic.
+- **On COMPAS, dropout costs fidelity.** More dropout lowers agreement
+  (0.95 without, 0.89 at 0.5) and the reveal gap (+0.14 without, +0.08
+  at 0.5), while the maps keep their pattern (correlation 0.91–0.99).
+  0.5 is kept because it is uniform over reveal subsets, not because it
+  scores best.
+- **Starting `b` at minus the mean matters on images, and agreement does
+  not show it.** Started at 0, the digit fits agree just as well
+  (0.93–0.96), but their maps correlate only 0.63–0.71 with the default's
+  and their reveal gap turns negative (down to −0.08): revealing in their
+  order is worse than revealing at random. On standardised tabular data
+  such as COMPAS the mean is already 0, so both starts give the same fit.
+- **On 7×7 MobileNet maps the ranking is no better than random even for
+  the default fit** (reveal gap within ±0.006): each cell's features see
+  most of the digit, so any half of the cells carries about the same
+  information.
+
+An earlier check reran the research replication experiments (one seed)
+with dropout off, or with `b` held at 0 for the whole fit (zeroed after
+every step, so it never learns), using both the package defaults and the
+old code's settings:
+
+- **Tabular: dropout off copies the model better but changes the
+  explanation.** Agreement rises (ScientificDiscovery 0.961 to 0.987,
+  OpenXAI 0.973 to 0.987), but Blood Pressure enters the Pima top 3, the
+  largest ScientificDiscovery Age importance grows from 1.12 to 8.65, and
+  the OpenXAI baseline drops from 1.18 to 0.40 (paper 1.08).
+- **`b` held at 0 breaks unscaled tabular data.** On ScientificDiscovery
+  (raw values: age in years, glucose 0–199) agreement falls from 0.961 to
+  0.766 (0.669 with the old settings). On standardised data it changes
+  little, as on COMPAS above.
+- **Text with the package defaults does better with `b` held at 0.**
+  Text already starts `b` at 0; stopping it from learning raised the
+  weighted AUROC on Judicial from 0.741 to 0.780 and on MovieReview from
+  0.679 to 0.704. With the old code's much smaller learning rate `b`
+  barely moves, so nothing changed.
+- **Images agree with the table above.** Pets moved by at most 0.002
+  with dropout off, within seed noise. On the digits, `b` held at 0
+  raised the reveal-curve area (0.839 to 0.855), but only because the
+  random order's area rose more (0.859 to 0.895): the reveal gap fell
+  from −0.020 to −0.040, the same loss as starting `b` at 0.
