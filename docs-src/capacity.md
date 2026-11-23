@@ -83,12 +83,11 @@ openly, baselines included.
 
 ## Why a whole reveal unit is dropped at a time
 
-While it trains, RoT hides a random half of the input each step and
-learns weights that still recover the model's answer from what is left
-(the dropout rate is fixed at 0.5). The question is what "a piece of the
-input" means: a whole reveal unit, or a single element inside one.
+While it trains, RoT hides a part of the input each step and
+learns to that recover the model's answer from what is left. The question is what
+should be hidden i.e. a whole unit or a single element inside one.
 
-The package drops a whole reveal unit at a time, and never a single
+The package drops a whole unit at a time, and never a single
 element:
 
 | Modality | What one draw hides | Shape of the keep mask | Legacy behaviour |
